@@ -2,6 +2,13 @@ import { PrismaClient } from '@prisma/client';
 
 const prisma = new PrismaClient();
 
+interface CandidateWithScore {
+    candidateId: number;
+    fullName: string;
+    current_interview_step: string;
+    average_score: number | null;
+}
+
 export class Position {
     id?: number;
     companyId: number;
@@ -28,8 +35,8 @@ export class Position {
         this.interviewFlowId = data.interviewFlowId;
         this.title = data.title;
         this.description = data.description;
-        this.status = data.status ?? 'Draft';
-        this.isVisible = data.isVisible ?? false;
+        this.status = data.status;
+        this.isVisible = data.isVisible;
         this.location = data.location;
         this.jobDescription = data.jobDescription;
         this.requirements = data.requirements;
@@ -39,41 +46,8 @@ export class Position {
         this.employmentType = data.employmentType;
         this.benefits = data.benefits;
         this.companyDescription = data.companyDescription;
-        this.applicationDeadline = data.applicationDeadline ? new Date(data.applicationDeadline) : undefined;
+        this.applicationDeadline = data.applicationDeadline;
         this.contactInfo = data.contactInfo;
-    }
-
-    async save() {
-        const positionData: any = {
-            companyId: this.companyId,
-            interviewFlowId: this.interviewFlowId,
-            title: this.title,
-            description: this.description,
-            status: this.status,
-            isVisible: this.isVisible,
-            location: this.location,
-            jobDescription: this.jobDescription,
-            requirements: this.requirements,
-            responsibilities: this.responsibilities,
-            salaryMin: this.salaryMin,
-            salaryMax: this.salaryMax,
-            employmentType: this.employmentType,
-            benefits: this.benefits,
-            companyDescription: this.companyDescription,
-            applicationDeadline: this.applicationDeadline,
-            contactInfo: this.contactInfo,
-        };
-
-        if (this.id) {
-            return await prisma.position.update({
-                where: { id: this.id },
-                data: positionData,
-            });
-        } else {
-            return await prisma.position.create({
-                data: positionData,
-            });
-        }
     }
 
     static async findOne(id: number): Promise<Position | null> {
@@ -83,5 +57,57 @@ export class Position {
         if (!data) return null;
         return new Position(data);
     }
-}
 
+    static async findCandidatesByPosition(positionId: number): Promise<CandidateWithScore[]> {
+        const position = await prisma.position.findUnique({
+            where: { id: positionId },
+            include: {
+                applications: {
+                    include: {
+                        candidate: {
+                            select: {
+                                id: true,
+                                firstName: true,
+                                lastName: true,
+                            }
+                        },
+                        interviewStep: {
+                            select: {
+                                name: true,
+                            }
+                        },
+                        interviews: {
+                            select: {
+                                score: true,
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        if (!position) {
+            return [];
+        }
+
+        const candidatesWithScores: CandidateWithScore[] = position.applications.map(app => {
+            // Calcular el promedio de scores
+            const scores = app.interviews
+                .map(interview => interview.score)
+                .filter((score): score is number => score !== null);
+            
+            const average_score = scores.length > 0
+                ? scores.reduce((sum, score) => sum + score, 0) / scores.length
+                : null;
+
+            return {
+                candidateId: app.candidate.id,
+                fullName: `${app.candidate.firstName} ${app.candidate.lastName}`,
+                current_interview_step: app.interviewStep.name,
+                average_score: average_score
+            };
+        });
+
+        return candidatesWithScores;
+    }
+}
